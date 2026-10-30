@@ -1,0 +1,72 @@
+name: Build APK
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.5
+
+      - name: Arrange project (works for flat upload or Android Studio layout)
+        run: |
+          B=app/src/main
+          mkdir -p $B/java/com/tonix/wifireader $B/res/values $B/res/drawable $B/res/mipmap-anydpi-v26
+          for f in MainActivity RadarView MapScreen SignalMath TrackerScreen ARScreen Telemetry Beeper SpeedEngine SpeedMeterScreen ApLocator Compass; do
+            [ -f $f.kt ] && mv -f $f.kt $B/java/com/tonix/wifireader/ || true
+          done
+          [ -f AndroidManifest.xml ] && mv -f AndroidManifest.xml $B/ || true
+          [ -f colors.xml ] && mv -f colors.xml $B/res/values/ || true
+          [ -f ic_fg.xml ] && mv -f ic_fg.xml $B/res/drawable/ || true
+          [ -f ic_launcher.xml ] && mv -f ic_launcher.xml $B/res/mipmap-anydpi-v26/ || true
+          echo '<resources><string name="app_name">WiFi Reader</string></resources>' > $B/res/values/strings.xml
+          printf 'org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8\nandroid.useAndroidX=true\nandroid.nonTransitiveRClass=true\n' > gradle.properties
+          cat > settings.gradle <<'EOT'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+          rootProject.name = "WiFiReader"
+          include ':app'
+          EOT
+          cat > build.gradle <<'EOT'
+          plugins {
+              id 'com.android.application' version '8.2.0' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+          }
+          EOT
+          cat > app/build.gradle <<'EOT'
+          plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
+          android {
+              namespace 'com.tonix.wifireader'
+              compileSdk 34
+              defaultConfig { applicationId "com.tonix.wifireader"; minSdk 26; targetSdk 34; versionCode 13; versionName "13.0" }
+              compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+              kotlinOptions { jvmTarget = '17' }
+          }
+          dependencies {
+              implementation 'org.osmdroid:osmdroid-android:6.1.17'
+          }
+          EOT
+
+      - name: Accept SDK licenses
+        run: |
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" > "$ANDROID_HOME/licenses/android-sdk-license"
+
+      - name: Build debug APK
+        run: gradle assembleDebug --console=plain
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WiFiReader-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
